@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cronômetro em Tempo Real</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body>
+    <h1>Cronômetro de Desenvolvimento</h1>
+    
+    <p id="statusMessage" class="status-message"></p>
+    <p class="time" id="display">00:00:00</p>
+    
+    <div class="button-container" id="buttonContainer" style="display:none">
+        <p>
+            <button onclick="startTimer()" title="Iniciar Cronômetro">
+                <i class="fas fa-play"></i> Iniciar
+            </button>
+            <button onclick="pauseTimer()" title="Pausar Cronômetro">
+                <i class="fas fa-pause"></i> Pausar
+            </button>
+            <button onclick="stopTimer()" title="Finalizar Cronômetro">
+                <i class="fas fa-stop"></i> Finalizar
+            </button>
+        </p>
+    </div>
+    
+    <h2>Tempos Registrados:</h2>
+    <ul id="log"></ul>
+
+    <script>
+        const socket = new WebSocket('ws://timerdev-production.up.railway.app');
+    
+        socket.onopen = () => {
+            console.log('Conectado ao servidor WebSocket');
+            checkAdminOnLoad();
+            fetchTimers();
+        };
+    
+        socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.action === 'init') {
+                updateDisplay(data.time);
+            } else if (data.action === 'updateTime') {
+                updateDisplay(data.time);
+            } else if (data.action === 'timerPaused') {
+                updateStatus('O cronômetro foi pausado.');
+            } else if (data.action === 'timerStopped') {
+                updateStatus('O cronômetro foi finalizado. Tempo registrado: ' + data.time);
+            } else if (data.action === 'timersUpdated') {
+                updateTimersList(data.timers);
+            } else if (data.action === 'timerDeleted') {
+                removeTimer(data.id);
+            }
+        };
+
+        function removeTimer(id) {
+            const logList = document.getElementById('log');
+            const items = logList.getElementsByTagName('li');
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].dataset.id == id) {
+                    logList.removeChild(items[i]);
+                    break;
+                }
+            }
+        }
+    
+        function fetchTimers() {
+            fetch('https://timerdev-production.up.railway.app/timers')
+                .then(response => response.json())
+                .then(data => {
+                    updateTimersList(data);
+                })
+                .catch(err => console.error('Erro ao buscar tempos:', err));
+        }
+
+        function updateTimersList(timers) {
+            const logList = document.getElementById('log');
+            logList.innerHTML = ''; 
+            timers.forEach(timer => {
+                logTime(formatTimer(timer), true);
+            });
+        }
+    
+        function formatTimer(timer) {
+            const timeSpent = formatTime(timer.time);
+            const startTime = new Date(timer.start_time).toLocaleString('pt-BR');
+            const canDelete = localStorage.getItem('isAdmin') === 'true';
+
+            return `
+                <div class="timer-entry">
+                    <div class="time-spent">${timeSpent}</div>
+                    <strong>Início:</strong> ${startTime}<br>
+                    <strong>Fim:</strong> ${timer.end_time ? new Date(timer.end_time).toLocaleString('pt-BR') : 'Em andamento'}<br>
+                    ${canDelete ? `<button onclick="deleteTimer(${timer.id})" class="delete-button">Excluir</button>` : ''}
+                </div>
+            `;
+        }
+
+        function deleteTimer(id) {
+            fetch(`https://timerdev-production.up.railway.app/timers/${id}`, {
+                method: 'DELETE'
+            })
+            .then(response => {
+                if (response.ok) {
+                    console.log(`Tempo ${id} excluído com sucesso`);
+                    removeTimerFromLocalList(id);
+                    socket.send(JSON.stringify({ action: 'timerDeleted', id: id }));
+                } else {
+                    console.error('Erro ao excluir o tempo:', response.statusText);
+                }
+            })
+            .catch(err => console.error('Erro ao fazer a solicitação de exclusão:', err));
+        }
+
+        function removeTimerFromLocalList(id) {
+            const logList = document.getElementById('log');
+            const items = logList.getElementsByTagName('li');
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].dataset.id == id) {
+                    logList.removeChild(items[i]);
+                    break;
+                }
+            }
+        }
+    
+        function startTimer() {
+            socket.send(JSON.stringify({ action: 'start' }));
+            updateStatus('Cronômetro em execução...');
+        }
+    
+        function pauseTimer() {
+            socket.send(JSON.stringify({ action: 'pause' }));
+            updateStatus('Cronômetro pausado.');
+        }
+    
+        function stopTimer() {
+            socket.send(JSON.stringify({ action: 'stop' }));
+            updateStatus('Cronômetro finalizado.');
+        }
+    
+        function updateDisplay(timeSpent) {
+            document.getElementById('display').innerText = timeSpent;
+        }
+    
+        function updateButtonContainerVisibility(isAdmin) {
+            document.getElementById('buttonContainer').style.display = isAdmin ? 'block' : 'none';
+        }
+    
+        function checkAdminOnLoad() {
+            const isAdmin = localStorage.getItem('isAdmin');
+            console.log('Valor armazenado de isAdmin:', isAdmin);
+    
+            if (isAdmin === null) {
+                promptForPassword();
+            } else {
+                updateButtonContainerVisibility(isAdmin === 'true');
+            }
+        }
+    
+        function promptForPassword() {
+            const password = prompt("Por favor, insira a senha para acessar o modo administrador:");
+            const correctPassword = "admin123";
+    
+            if (password === correctPassword) {
+                localStorage.setItem('isAdmin', 'true');
+                updateButtonContainerVisibility(true);
+            } else {
+                alert('Senha incorreta. Acesso negado.');
+                localStorage.setItem('isAdmin', 'false');
+            }
+        }
+    
+        function logTime(time, prepend = false) {
+            const logList = document.getElementById('log');
+            const listItem = document.createElement('li');
+            listItem.dataset.id = time.id; 
+            listItem.innerHTML = time; 
+
+            if (prepend) {
+                logList.insertAdjacentElement('afterbegin', listItem);
+            } else {
+                logList.appendChild(listItem);
+            }
+        }
+    
+        function updateStatus(message) {
+            const statusMessage = document.getElementById('statusMessage');
+            statusMessage.textContent = message;
+        }
+    
+        function formatTime(milliseconds) {
+            const totalSeconds = Math.floor(milliseconds / 1000);
+            const hours = Math.min(Math.floor(totalSeconds / 3600), 99); 
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+    
+            return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        }
+    </script>
+</body>
+</html>
