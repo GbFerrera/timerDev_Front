@@ -31,7 +31,7 @@
     <ul id="log"></ul>
 
     <script>
-        const socket = new WebSocket('ws://timerdev-production.up.railway.app');
+        const socket = new WebSocket('wss://timerdev-production.up.railway.app');
     
         socket.onopen = () => {
             console.log('Conectado ao servidor WebSocket');
